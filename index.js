@@ -96,7 +96,8 @@ export class Bridge {
   }
 }
 
-async function handleRpc(msg, bridge) {
+async function handleRpc(msg, bridge, open) {
+  const tools = open ? TOOLS.filter((x) => x.name !== "run_lua") : TOOLS; // run_lua disabled when no TOKEN is set
   const { id, method, params } = msg;
   const reply = (result) => ({ jsonrpc: "2.0", id, result });
   const fail = (code, message) => ({ jsonrpc: "2.0", id, error: { code, message } });
@@ -113,10 +114,10 @@ async function handleRpc(msg, bridge) {
     case "ping":
       return reply({});
     case "tools/list":
-      return reply({ tools: TOOLS });
+      return reply({ tools });
     case "tools/call": {
       const { name, arguments: args } = params || {};
-      if (!TOOLS.find((x) => x.name === name)) return fail(-32602, "unknown tool " + name);
+      if (!tools.find((x) => x.name === name)) return fail(-32602, "unknown tool " + name);
       const res = await bridge
         .fetch("https://do/enqueue", {
           method: "POST",
@@ -139,7 +140,8 @@ export default {
 
     const url = new URL(req.url);
     const key = url.searchParams.get("key") || (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
-    if (!env.TOKEN || key !== env.TOKEN) return new Response("unauthorized", { status: 401, headers: cors });
+    const open = !env.TOKEN; // no TOKEN secret set = no auth (anyone with the URL can use it)
+    if (!open && key !== env.TOKEN) return new Response("unauthorized", { status: 401, headers: cors });
 
     const bridge = env.BRIDGE.get(env.BRIDGE.idFromName("main"));
 
@@ -151,7 +153,7 @@ export default {
       if (req.method !== "POST") return new Response("method not allowed", { status: 405, headers: cors });
       const body = await req.json();
       const msgs = Array.isArray(body) ? body : [body];
-      const out = (await Promise.all(msgs.map((m) => handleRpc(m, bridge)))).filter(Boolean);
+      const out = (await Promise.all(msgs.map((m) => handleRpc(m, bridge, open)))).filter(Boolean);
       if (!out.length) return new Response(null, { status: 202, headers: cors });
       return Response.json(Array.isArray(body) ? out : out[0], { headers: cors });
     }
